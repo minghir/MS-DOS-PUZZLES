@@ -32,8 +32,9 @@ int grid = 1;
 int mouse = 1;
 int paused = 1;
 int size = 25;
+int prev_button_status = 0;
 
-char filename[8];
+char filename[9] = "        ";
 
 int pan_vert = 0;
 int pan_horiz = 0;
@@ -365,47 +366,51 @@ void clear_table(){
 	pause();
 }
 
-
 void read_gol_file(){
 	
 	word i = 0, j = 0;
 	FILE *fp;
 	char path[30];
 	int new_size;
-	
+	char line[32]; // Buffer pentru citirea liniei (mai sigur)
 	
 	delay(400);
 	
 	sprintf(path,"SAVES\\%s.gol",filename);
-	
 	fp = fopen(path,"r+");
+	if (fp == NULL) return; // Adaugă o verificare de eroare
 	
-	fscanf(fp,"%d[^\n]",&new_size);
-	fgetc(fp);
-	new_size = new_size > MAX_SIZE ? MAX_SIZE : new_size;
-	pan_vert = pan_horiz = 0;
-	
-	if(new_size != size){
-		size = new_size;
-		total_cels = size*size;
-		table = (char *)realloc(table,total_cels);
-		nextgen = (char *)realloc(nextgen,total_cels);
+	// Citirea dimensiunii (folosind fgets/sscanf pentru siguranță)
+	if (fgets(line, sizeof(line), fp) != NULL && sscanf(line, "%d", &new_size) == 1) {
 		
-	}else{
-		size = new_size;
+		new_size = new_size > MAX_SIZE ? MAX_SIZE : new_size;
+		pan_vert = pan_horiz = 0;
+		
+		if(new_size != size){
+			size = new_size;
+			total_cels = size*size;
+			
+			// Realloc este riscant, ar trebui să verifici rezultatul
+			table = (char *)realloc(table,total_cels);
+			nextgen = (char *)realloc(nextgen,total_cels);
+		}
+	} else {
+		fclose(fp);
+		return;
 	}
 	
 	population = generation = pan_horiz = pan_vert = 0;
-	
 	clear_table();
 	
-	while((fscanf(fp,"%hu[^\n]",&i))!=EOF){
-		fgetc(fp);
-		if(i > total_cels)
-			break;
-		table[i]=1;
-		nextgen[i]=1;
-		j++;
+	// Citirea indicilor (folosind fgets/sscanf pentru siguranță)
+	while(fgets(line, sizeof(line), fp) != NULL){
+		if(sscanf(line,"%hu",&i) == 1){
+			if(i < total_cels){
+				table[i]=1;
+				nextgen[i]=1;
+				j++;
+			}
+		}
 	}
 	
 	population = j;
@@ -417,13 +422,21 @@ void load_file(){
 	int i = 0,j;
 	int files_no;
 	
-	char *files[8];
+	char *position_ptr;
+	int position;
+	
+	//char *files[29];
+	char **files = NULL;
+	char **temp_files  = NULL;
 	char *tmp;// = *files;
 	//char files[255][8];
 	struct dirent *entry;
 	DIR *dir;
 
 	dir = opendir(".\\SAVES");
+	
+	if(!dir) return; // Verificare esențială
+	
 	
 	if(!paused)
 		pause();
@@ -436,55 +449,63 @@ void load_file(){
 							toupper(entry->d_name[strlen(entry->d_name)-2]) == 'O' && 
 							toupper(entry->d_name[strlen(entry->d_name)-1]) == 'L')) continue;
 		
-			files[i] = (char *) malloc(8);
-			//entry->d_name[strlen(entry->d_name)-4] = '\0';
+			//files[i] = (char *) malloc(9);
+			///////////
+			temp_files = (char **) realloc(files, (i + 1) * sizeof(char *));
+			if (temp_files == NULL) {
+                // Dacă realloc eșuează, ieși și eliberează memoria deja alocată
+                break; 
+            }
+            files = temp_files; // Actualizează pointerul principal
+            
+			// PAS B: Alocă memorie pentru numele fișierului
+			files[i] = (char *) malloc(9); // 8 caractere + '\0'
+            if (files[i] == NULL) {
+                // Dacă malloc eșuează, gestionează eroarea
+                break;
+            }
+			//////////////
 			
-			//files[i] = (char *) malloc(sizeof(strlen(entry->d_name)-4));
 			
-			strncpy(files[i],entry->d_name,8);
-			
-			for(j=0;j<=8;j++){
-				if(files[i][j] == '.'){
-					files[i][j] = 0;//'\0';
-					break;
-				}
-			}
-			
-			//files[i][8] = 0;
-			//files[i][strlen(files[i])-4]='\0'; //retin numele fara extensie
+			position_ptr = strchr(entry->d_name, '.');
+			position = (position_ptr == NULL ? -1 : position_ptr - entry->d_name);
+			strncpy(files[i],entry->d_name,position);
+			files[i][position] = '\0';
 			i++;
 	}
 	
-	files_no = i > 0 ?  i - 1 : 0;
+	closedir(dir);
 	
-	if(files_no == 0)
+	files_no = i > 0 ?  i - 1 : 0;
+	if(files_no == 0){
+		if (files != NULL) free(files);
 		return;
-		
+	}
+	
 	i = 0;
 	while( 1 ){
 	
 		if(get_key_status(SCAN_ENTER)){
+			while(get_key_status(SCAN_ENTER));
 			strcpy(filename,files[i]);
-			filename[8] = 0;
+			//filename[9] = '\0';
 			break;
 		}
 		
 		if(get_key_status(SCAN_ESC)){
-			for(i = 0;i <= files_no; i++){
-				free(files[i]);
-			}
-			closedir(dir);
-			return;
+			while(get_key_status(SCAN_ESC));
+			break;
 		}
 		
 		if(get_key_status(SCAN_UP_ARROW)){
-				i = i > 0 ? i-1 : 0;
-				delay(KEY_DELAY);
+			while(get_key_status(SCAN_UP_ARROW));
+			i = i > 0 ? i-1 : 0;
+				
 		}
 		
 		if(get_key_status(SCAN_DOWN_ARROW)){
-				i = i < files_no ? i+1 : files_no;
-				delay(KEY_DELAY);
+			while(get_key_status(SCAN_DOWN_ARROW));
+			i = i < files_no ? i+1 : files_no;
 		}
 		
 		
@@ -499,26 +520,19 @@ void load_file(){
 		if(i + 1 <= files_no) put_str_15(118,114,files[i+1],WHITE,0);
 		if(i + 2 <= files_no) put_str_15(118,124,files[i+2],WHITE,0);
 		
-		RestrictMousePtr(0,0,318,197);
-		GetMouseStatus();
-		put_str_15(GetPosX(),GetPosY(),"m",WHITE,240);
+		//RestrictMousePtr(0,0,318,197);
+		//GetMouseStatus();
+		//put_str_15(GetPosX(),GetPosY(),"m",WHITE,240);
 
 		show_buffer();
 	}
-	
-        /*
-	tmp = files;
-	while(tmp != NULL){
-		free(tmp);
-		tmp++;
-	}
-	//free(files);
-         */
-        
-        for(i=0;i<=files_no;i++)
-            free(files[i]);
-
-	closedir(dir);
+           
+    for(j=0; j < files_no; j++) {
+        if (files[j] != NULL) free(files[j]);
+    }
+    
+    // Eliberează tabloul de pointeri (care conținea adresele)
+    if (files != NULL) free(files);
 	
   read_gol_file();
   if(!paused)
@@ -532,6 +546,7 @@ void help(){
 
 	while(1){
 		if(get_key_status(SCAN_ESC) ){
+			while(get_key_status(SCAN_ESC));
 			return;
 		}
 		
@@ -623,29 +638,32 @@ void check_buttons(int x, int y){
 void on_usr_input(){
 		word i;
 		int x,y;
+		int current_button;
 		
 			if(get_key_status(SCAN_A)){
+				while(get_key_status(SCAN_A));
+
 				delay_msec = delay_msec < MAX_DELAY ? delay_msec + 10 : delay_msec;
-				delay(KEY_DELAY);
 				return;
 			}
 				
 			if(get_key_status(SCAN_D)){
+				while(get_key_status(SCAN_D));
 				delay_msec = delay_msec > 0 ? delay_msec - 10 : delay_msec;
-				delay(KEY_DELAY);
 				return;
 			}
 		
 				
 				if(get_key_status(SCAN_N)){
+					while(get_key_status(SCAN_N));
 					memcpy(table,nextgen,size * size);	
 					generation++;
-					delay(KEY_DELAY);
 					return;
 				}
 				
 				
 				if(get_key_status(SCAN_HOME)){
+					while(get_key_status(SCAN_HOME));
 					pan_horiz = 0;
 					pan_vert = 0;
 					return;
@@ -653,6 +671,7 @@ void on_usr_input(){
 				
 				
 				if(get_key_status(SCAN_END)){
+					while(get_key_status(SCAN_END));
 					pan_horiz = size - 198*a_ratio/zoom + 9;
 					pan_vert =  size - 198/zoom;
 					return;
@@ -719,22 +738,25 @@ void on_usr_input(){
 				 }
 				
 				if(get_key_status(SCAN_SPACE)){
-					//delay(KEY_DELAY);
+					while(get_key_status(SCAN_SPACE));
+
 					if(paused)
 						play();
 					else 
 						pause();
-					delay(KEY_DELAY);
+					
 					return;
 				}
 				
 				if(get_key_status(SCAN_DELETE)){
+					while(get_key_status(SCAN_DELETE));
 					clear_table();
-					delay(KEY_DELAY);
+					
 					return;
 				}
 				
 				if(get_key_status(SCAN_INSERT)){
+					while(get_key_status(SCAN_INSERT));
 					random_table();
 					delay(KEY_DELAY);
 					return;
@@ -745,16 +767,16 @@ void on_usr_input(){
 				}
 				
 				if(get_key_status(SCAN_S)) {
-						delay(KEY_DELAY);
+					while(get_key_status(SCAN_S));
+						
 						save_file();
-						delay(KEY_DELAY);
+						
 						return;
 				}
 				
 				if(get_key_status(SCAN_L)) {
-						delay(KEY_DELAY);
+						while(get_key_status(SCAN_L));
 						load_file();
-						delay(KEY_DELAY);
 						return;
 				}
 				
@@ -766,26 +788,44 @@ void on_usr_input(){
 				
 				
 				if(mouse){
-					
+	
 					GetMouseStatus();
 					x = GetPosX();
 					y = GetPosY();
+					current_button = GetButton(); // Starea butonului curent (1=Stânga, 2=Dreapta, 0=Nimic)
+
+					// 1. LOGICA PENTRU DRENAJ (ȚINE APĂSAT)
+					// Acțiunea de desen/șters pe tablă trebuie să funcționeze pe cât timp ții butonul.
 					
-					if(GetButton() == 1){
-						if( x <= 198*a_ratio && y <= 198){
-							cel = (word) x/a_ratio/zoom + pan_horiz + (word) y/zoom*size + (word)  pan_vert*size;
-							table[cel] =  1;
-							nextgen[cel] =  1;
-						}else{
-							check_buttons(x, y);
-						}
+					// Butonul Stânga (Setează celula) - Când este ținut apăsat, desenează.
+					if(current_button == 1 && x <= 198*a_ratio && y <= 198){
+						cel = (word) x/a_ratio/zoom + pan_horiz + (word) y/zoom*size + (word) pan_vert*size;
+						table[cel] = 1;
+						nextgen[cel] = 1;
 					}
 					
-					if(GetButton() == 2 && x <= 198*a_ratio && y <= 198){
-						cel = (word) x/a_ratio/zoom + pan_horiz + (word) y/zoom*size + (word)  pan_vert*size;
-						table[cel] =  0;
-						nextgen[cel] =  0;
+					// Butonul Dreapta (Șterge celula) - Când este ținut apăsat, șterge.
+					if(current_button == 2 && x <= 198*a_ratio && y <= 198){
+						cel = (word) x/a_ratio/zoom + pan_horiz + (word) y/zoom*size + (word) pan_vert*size;
+						table[cel] = 0;
+						nextgen[cel] = 0;
 					}
+
+					// 2. LOGICA PENTRU BUTOANE UI (CLICK UNIC)
+					
+					// Verifică dacă:
+					// a) Ești în zona UI (nu pe tablă)
+					// b) Butonul Stânga era apăsat ÎNAINTE (`prev_button_status == 1`)
+					// c) Butonul Stânga este ELIBERAT ACUM (`current_button == 0`)
+					if (prev_button_status == 1 && current_button == 0 && x > 198*a_ratio) {
+						
+						// Clicul s-a terminat în zona UI, apelează check_buttons O SINGURĂ DATĂ
+						check_buttons(x, y);
+					}
+					
+					// 3. ACTUALIZEAZĂ STAREA ANTERIOARĂ
+					// Reține starea curentă pentru următorul ciclu.
+					prev_button_status = current_button;
 				}
 }
 
